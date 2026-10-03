@@ -1,0 +1,130 @@
+name: Build APK
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build
+        run: |
+          F=$(ls -S *.html 2>/dev/null | head -1)
+          if [ -z "$F" ]; then
+            echo "::error title=Нет HTML файла::В корне репозитория нет .html файла игры. Загрузите Neon_Coast.html. Сейчас там: $(ls | tr '\n' ' ')"
+            exit 1
+          fi
+          cp "$F" game.html
+          cat > package.json <<'EOF_package_json'
+          {
+            "name": "neon-coast",
+            "version": "1.0.0",
+            "private": true,
+            "scripts": {
+              "prepare-web": "node prepare.js",
+              "android": "node prepare.js && npx cap add android && node patch-android.js && npx cap sync android && npx cap open android"
+            },
+            "dependencies": {
+              "@capacitor/android": "^6.1.0",
+              "@capacitor/cli": "^6.1.0",
+              "@capacitor/core": "^6.1.0",
+              "three": "0.128.0"
+            }
+          }
+          EOF_package_json
+          cat > capacitor.config.json <<'EOF_capacitor_config_json'
+          {
+            "appId": "com.neoncoast.game",
+            "appName": "Neon Coast",
+            "webDir": "www",
+            "backgroundColor": "#120a1f",
+            "android": { "allowMixedContent": false }
+          }
+          EOF_capacitor_config_json
+          cat > prepare.js <<'EOF_prepare_js'
+          // Кладёт игру в www/ и заменяет CDN-ссылки на локальные копии three.js,
+          // чтобы APK работал без интернета.
+          const fs = require('fs'), path = require('path');
+          const T = path.join('node_modules', 'three');
+          if (!fs.existsSync(T)) { console.error('Сначала выполните: npm install'); process.exit(1); }
+          let html = fs.readFileSync('game.html', 'utf8');
+          const files = new Map();
+          html = html.replace(/https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/three\.js\/r128\/three\.min\.js/g, () => {
+            files.set('three.min.js', path.join(T, 'build', 'three.min.js')); return 'lib/three.min.js';
+          });
+          html = html.replace(/https:\/\/cdn\.jsdelivr\.net\/npm\/three@0\.128\.0\/examples\/js\/([\w\/.\-]+)/g, (_, p) => {
+            files.set(p, path.join(T, 'examples', 'js', p)); return 'lib/' + p;
+          });
+          fs.rmSync('www', { recursive: true, force: true });
+          for (const [rel, src] of files) {
+            if (!fs.existsSync(src)) { console.error('Нет файла', src); process.exit(1); }
+            const dst = path.join('www', 'lib', rel);
+            fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(src, dst);
+          }
+          fs.writeFileSync(path.join('www', 'index.html'), html);
+          console.log('Готово. Локальных библиотек:', files.size);
+          EOF_prepare_js
+          cat > patch-android.js <<'EOF_patch_android_js'
+          // Альбомная ориентация + полный экран для Android-проекта.
+          const fs = require('fs'), path = require('path');
+          const man = 'android/app/src/main/AndroidManifest.xml';
+          let m = fs.readFileSync(man, 'utf8');
+          if (!m.includes('screenOrientation')) m = m.replace('<activity', '<activity android:screenOrientation="sensorLandscape"');
+          fs.writeFileSync(man, m);
+          const dir = 'android/app/src/main/java/com/neoncoast/game';
+          const f = path.join(dir, 'MainActivity.java');
+          fs.writeFileSync(f, `package com.neoncoast.game;
+
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.WindowManager;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+              hideBars();
+            }
+            @Override
+            public void onWindowFocusChanged(boolean hasFocus) {
+              super.onWindowFocusChanged(hasFocus);
+              if (hasFocus) hideBars();
+            }
+            private void hideBars() {
+              getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+            }
+          }
+          `);
+          console.log('Android-проект пропатчен');
+          EOF_patch_android_js
+          run() {
+            name="$1"; shift
+            echo "=== $name ==="
+            if ! "$@" > /tmp/out.log 2>&1; then
+              tail -n 25 /tmp/out.log
+              echo "::error title=Упал шаг ($name)::$(tail -n 8 /tmp/out.log | tr '\n' '|')"
+              exit 1
+            fi
+            tail -n 3 /tmp/out.log
+          }
+          run "npm install" npm install
+          run "prepare.js" node prepare.js
+          run "cap add android" npx cap add android
+          run "patch-android.js" node patch-android.js
+          run "cap sync" npx cap sync android
+          run "gradle assembleDebug" bash -c "cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-coast-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

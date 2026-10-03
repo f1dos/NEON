@@ -1,0 +1,15 @@
+{
+  "name": "neon-coast",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare-web": "node prepare.js",
+    "android": "node prepare.js && npx cap add android && node patch-android.js && npx cap sync android && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/core": "^6.1.0",
+    "three": "0.128.0"
+  }
+}

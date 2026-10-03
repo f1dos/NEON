@@ -1,0 +1,7 @@
+{
+  "appId": "com.neoncoast.game",
+  "appName": "Neon Coast",
+  "webDir": "www",
+  "backgroundColor": "#120a1f",
+  "android": { "allowMixedContent": false }
+}
