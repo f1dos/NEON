@@ -15,11 +15,12 @@ jobs:
           java-version: 17
       - name: Build
         run: |
-          F=$(ls -S *.html 2>/dev/null | head -1)
+          F=$(find . -name '*.html' -not -path './node_modules/*' -not -path './android/*' -printf '%s %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           if [ -z "$F" ]; then
-            echo "::error title=Нет HTML файла::В корне репозитория нет .html файла игры. Загрузите Neon_Coast.html. Сейчас там: $(ls | tr '\n' ' ')"
+            echo "::error title=Нет HTML файла::В репозитории вообще нет .html файлов. Загрузите Neon_Coast.html. Сейчас там: $(find . -not -path './.git/*' -type f | head -20 | tr '\n' ' ')"
             exit 1
           fi
+          echo "Беру игру из файла: $F"
           cp "$F" game.html
           cat > package.json <<'EOF_package_json'
           {
@@ -80,12 +81,12 @@ jobs:
           const dir = 'android/app/src/main/java/com/neoncoast/game';
           const f = path.join(dir, 'MainActivity.java');
           fs.writeFileSync(f, `package com.neoncoast.game;
- 
+
           import android.os.Bundle;
           import android.view.View;
           import android.view.WindowManager;
           import com.getcapacitor.BridgeActivity;
- 
+
           public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
