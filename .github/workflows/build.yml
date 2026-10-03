@@ -14,6 +14,10 @@ jobs:
           distribution: temurin
           java-version: 17
       - name: Build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: neoncoast
         run: |
           F=$(find . -name '*.html' -not -path './node_modules/*' -not -path './android/*' -printf '%s %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           if [ -z "$F" ]; then
@@ -81,12 +85,12 @@ jobs:
           const dir = 'android/app/src/main/java/com/neoncoast/game';
           const f = path.join(dir, 'MainActivity.java');
           fs.writeFileSync(f, `package com.neoncoast.game;
-
+ 
           import android.os.Bundle;
           import android.view.View;
           import android.view.WindowManager;
           import com.getcapacitor.BridgeActivity;
-
+ 
           public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
@@ -107,6 +111,17 @@ jobs:
             }
           }
           `);
+ 
+          // Релизная подпись (если заданы переменные окружения) и номер версии
+          const gp = 'android/app/build.gradle';
+          let g = fs.readFileSync(gp, 'utf8');
+          g = g.replace(/versionCode \d+/, 'versionCode ' + (process.env.GITHUB_RUN_NUMBER || 1));
+          if (process.env.KEYSTORE_FILE && !g.includes('signingConfigs')) {
+            g = g.replace('buildTypes {',
+              "signingConfigs {\n        release {\n            storeFile file(System.getenv('KEYSTORE_FILE'))\n            storePassword System.getenv('KEYSTORE_PASSWORD')\n            keyAlias System.getenv('KEY_ALIAS')\n            keyPassword System.getenv('KEYSTORE_PASSWORD')\n        }\n    }\n    buildTypes {");
+            g = g.replace(/release\s*\{(\s*)minifyEnabled/, 'release {$1signingConfig signingConfigs.release$1minifyEnabled');
+          }
+          fs.writeFileSync(gp, g);
           console.log('Android-проект пропатчен');
           EOF_patch_android_js
           run() {
@@ -119,13 +134,23 @@ jobs:
             fi
             tail -n 3 /tmp/out.log
           }
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.jks"
+            export KEYSTORE_FILE="$GITHUB_WORKSPACE/release.jks"
+            TASK=assembleRelease
+            echo "РЕЛИЗНАЯ сборка (подпись найдена)"
+          else
+            TASK=assembleDebug
+            echo "ТЕСТОВАЯ сборка (нет секретов KEYSTORE_*)"
+          fi
           run "npm install" npm install
           run "prepare.js" node prepare.js
           run "cap add android" npx cap add android
           run "patch-android.js" node patch-android.js
           run "cap sync" npx cap sync android
-          run "gradle assembleDebug" bash -c "cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon"
+          run "gradle $TASK" bash -c "cd android && chmod +x gradlew && ./gradlew $TASK --no-daemon"
       - uses: actions/upload-artifact@v4
         with:
           name: neon-coast-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/*/*.apk
+ 
